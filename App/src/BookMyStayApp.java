@@ -1,148 +1,111 @@
-import java.util.HashMap;
-import java.util.Map;
+import java.util.LinkedList;
+import java.util.Queue;
 
 /**
- * Domain Models representing 'What a room is'.
+ * Reservation class represents a guest's intent to book a room.
+ * This encapsulates the request details before processing.
  */
-abstract class Room {
-    private String roomType;
-    private int numberOfBeds;
-    private double price;
+class Reservation {
+    private String guestName;
+    private String requestedRoomType;
 
-    public Room(String roomType, int numberOfBeds, double price) {
-        this.roomType = roomType;
-        this.numberOfBeds = numberOfBeds;
-        this.price = price;
+    public Reservation(String guestName, String requestedRoomType) {
+        this.guestName = guestName;
+        this.requestedRoomType = requestedRoomType;
     }
 
-    public String getRoomType() { return roomType; }
-    public int getNumberOfBeds() { return numberOfBeds; }
-    public double getPrice() { return price; }
-}
-
-class SingleRoom extends Room {
-    public SingleRoom() { super("Single Room", 1, 100.00); }
-}
-
-class DoubleRoom extends Room {
-    public DoubleRoom() { super("Double Room", 2, 150.00); }
-}
-
-class SuiteRoom extends Room {
-    public SuiteRoom() { super("Suite Room", 3, 350.00); }
-}
-
-/**
- * RoomInventory acts as the Single Source of Truth for system state.
- */
-class RoomInventory {
-    private Map<String, Integer> availabilityMap;
-
-    public RoomInventory() {
-        this.availabilityMap = new HashMap<>();
+    public String getGuestName() {
+        return guestName;
     }
 
-    public void registerRoomType(String roomType, int count) {
-        availabilityMap.put(roomType, count);
+    public String getRequestedRoomType() {
+        return requestedRoomType;
     }
 
-    // Read-only method used by SearchService
-    public int getAvailability(String roomType) {
-        return availabilityMap.getOrDefault(roomType, 0);
-    }
-
-    // Write method (Intentionally NOT used by SearchService)
-    public boolean updateAvailability(String roomType, int countChange) {
-        int currentAvailability = getAvailability(roomType);
-        int newAvailability = currentAvailability + countChange;
-        if (newAvailability < 0) return false;
-
-        availabilityMap.put(roomType, newAvailability);
-        return true;
+    @Override
+    public String toString() {
+        return "Guest: " + guestName + " | Requested: " + requestedRoomType;
     }
 }
 
 /**
- * SearchService handles read-only access to inventory and room information.
- * Demonstrates Separation of Concerns and Defensive Programming.
+ * BookingRequestQueue manages incoming booking requests.
+ * Demonstrates the Queue Data Structure and the FIFO Principle.
+ * Note: Decouples request intake from allocation (no inventory mutation here).
  */
-class SearchService {
-    private RoomInventory inventory;
-    private Room[] availableRoomModels;
+class BookingRequestQueue {
+    // Using a LinkedList as the underlying implementation for the Queue interface
+    private Queue<Reservation> queue;
 
-    public SearchService(RoomInventory inventory, Room[] availableRoomModels) {
-        this.inventory = inventory;
-        this.availableRoomModels = availableRoomModels;
+    public BookingRequestQueue() {
+        this.queue = new LinkedList<>();
     }
 
     /**
-     * Searches and displays rooms that have an availability greater than zero.
-     * System state remains completely unchanged.
+     * Accepts a booking request and adds it to the end of the queue.
+     * Preserves the order in which requests arrive.
      */
-    public void displayAvailableRooms() {
-        System.out.println("--- Search Results: Available Rooms ---");
+    public void addRequest(Reservation reservation) {
+        queue.offer(reservation); // .offer() safely adds to the tail of the queue
+        System.out.println("[Intake] Received request -> " + reservation.toString());
+    }
 
-        boolean foundAnyRoom = false;
-
-        // Defensive Programming: Check against null arrays
-        if (availableRoomModels == null || availableRoomModels.length == 0) {
-            System.out.println("System Error: No room models configured.");
+    /**
+     * Displays the current state of the queue to verify FIFO ordering.
+     */
+    public void displayQueue() {
+        System.out.println("\n--- Current Booking Queue (FIFO Order) ---");
+        if (queue.isEmpty()) {
+            System.out.println("The queue is currently empty.");
             return;
         }
 
-        for (Room room : availableRoomModels) {
-            // Read-Only Access
-            int availableCount = inventory.getAvailability(room.getRoomType());
-
-            // Validation Logic: Exclude room types with zero availability
-            if (availableCount > 0) {
-                System.out.printf("%-15s | Available: %d | Beds: %d | Price: $%.2f%n",
-                        room.getRoomType(), availableCount, room.getNumberOfBeds(), room.getPrice());
-                foundAnyRoom = true;
-            }
+        int position = 1;
+        // Iterating through the queue preserves insertion order automatically
+        for (Reservation res : queue) {
+            System.out.println(position + ". " + res.toString());
+            position++;
         }
-
-        if (!foundAnyRoom) {
-            System.out.println("We're sorry, there are currently no rooms available.");
-        }
+        System.out.println("------------------------------------------");
+        System.out.println("Total requests waiting for processing: " + queue.size());
     }
 }
 
 /**
- * The main entry point for Use Case 4.
- * Demonstrates searching for rooms without mutating state.
+ * The main entry point for Use Case 5.
+ * Demonstrates First-Come-First-Served booking request handling.
  * * @author Your Name
- * @version 4.0
+ * @version 5.0
  */
 public class BookMyStayApp {
 
     public static void main(String[] args) {
         System.out.println("=========================================");
-        System.out.println(" Book My Stay - Room Search Service      ");
+        System.out.println(" Book My Stay - Booking Request Intake   ");
         System.out.println("=========================================\n");
 
-        // 1. Initialize Domain Models
-        Room[] hotelRooms = {
-                new SingleRoom(),
-                new DoubleRoom(),
-                new SuiteRoom()
-        };
+        // 1. Initialize the Booking Request Queue
+        BookingRequestQueue bookingQueue = new BookingRequestQueue();
 
-        // 2. Initialize and Populate Inventory
-        RoomInventory inventory = new RoomInventory();
-        inventory.registerRoomType("Single Room", 5);
-        inventory.registerRoomType("Double Room", 0); // Intentionally set to 0 to test filtering
-        inventory.registerRoomType("Suite Room", 2);
+        // 2. Simulate guests submitting booking requests during peak demand
+        System.out.println("Simulating incoming booking requests...");
 
-        // 3. Initialize Search Service (injecting dependencies)
-        SearchService searchService = new SearchService(inventory, hotelRooms);
+        Reservation req1 = new Reservation("Alice Smith", "Suite Room");
+        Reservation req2 = new Reservation("Bob Johnson", "Single Room");
+        Reservation req3 = new Reservation("Charlie Davis", "Double Room");
+        Reservation req4 = new Reservation("Diana Prince", "Single Room");
 
-        // Guest initiates a room search request
-        System.out.println("Guest Request: \"Show me available rooms.\"\n");
+        // 3. Add requests to the queue (Decoupled from allocation)
+        bookingQueue.addRequest(req1);
+        bookingQueue.addRequest(req2);
+        bookingQueue.addRequest(req3);
+        bookingQueue.addRequest(req4);
 
-        // 4. Perform Search
-        searchService.displayAvailableRooms();
+        // 4. Display the queue to prove requests are stored in arrival order
+        bookingQueue.displayQueue();
 
+        System.out.println("\nNotice: No inventory mutation has occurred yet.");
+        System.out.println("Requests are simply staged in a fair, First-Come-First-Served order.");
         System.out.println("\n=========================================");
         System.out.println("Application terminated.");
     }
