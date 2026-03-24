@@ -1,18 +1,57 @@
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.Map;
-import java.util.Queue;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.*;
 
 /**
- * Represents a guest's intent to book a room.
+ * CLASS - RoomInventory
+ * Maintains available room types and their current availability counts.
+ * Uses synchronized methods to ensure Thread Safety.
  */
-class Reservation {
+class RoomInventory {
+    private final Map<String, Integer> inventoryCounts;
+
+    public RoomInventory() {
+        inventoryCounts = new HashMap<>();
+        // Intentionally low inventory to force contention among multiple threads
+        inventoryCounts.put("Single", 3);
+        inventoryCounts.put("Double", 2);
+        inventoryCounts.put("Suite", 1);
+    }
+
+    /**
+     * CRITICAL SECTION: Synchronized to prevent Race Conditions.
+     * Only one thread can execute this method at a time for a given RoomInventory instance.
+     */
+    public synchronized boolean allocateRoom(String roomType) {
+        int currentCount = inventoryCounts.getOrDefault(roomType, 0);
+
+        if (currentCount > 0) {
+            // Simulate processing delay to expose race conditions if synchronization were missing
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            inventoryCounts.put(roomType, currentCount - 1);
+            return true;
+        }
+        return false;
+    }
+
+    public synchronized void displayInventory() {
+        System.out.println("Current Inventory: " + inventoryCounts);
+    }
+}
+
+/**
+ * CLASS - BookingRequest
+ * Represents an individual guest's request to book a room.
+ */
+class BookingRequest {
     private String guestName;
     private String requestedRoomType;
 
-    public Reservation(String guestName, String requestedRoomType) {
+    public BookingRequest(String guestName, String requestedRoomType) {
         this.guestName = guestName;
         this.requestedRoomType = requestedRoomType;
     }
@@ -22,134 +61,76 @@ class Reservation {
 }
 
 /**
- * Inventory Service manages room availability state and assigned rooms.
- * Demonstrates mapping Room Types to Assigned Rooms using Sets to prevent double-booking.
+ * CLASS - BookingProcessor
+ * A Runnable task that processes a booking request concurrently.
  */
-class InventoryService {
-    private Map<String, Integer> availableCounts;
-    // Map to track allocated room IDs per room type using a Set for uniqueness
-    private Map<String, Set<String>> allocatedRooms;
+class BookingProcessor implements Runnable {
+    private BookingRequest request;
+    private RoomInventory inventory;
 
-    public InventoryService() {
-        this.availableCounts = new HashMap<>();
-        this.allocatedRooms = new HashMap<>();
-    }
-
-    public void registerRoomType(String roomType, int count) {
-        availableCounts.put(roomType, count);
-        allocatedRooms.put(roomType, new HashSet<>());
-    }
-
-    public boolean isAvailable(String roomType) {
-        return availableCounts.getOrDefault(roomType, 0) > 0;
-    }
-
-    /**
-     * Atomic Logical Operation: Generates ID, updates Set, and decrements inventory.
-     */
-    public String allocateRoom(String roomType) {
-        if (!isAvailable(roomType)) {
-            return null; // Allocation failed due to lack of availability
-        }
-
-        Set<String> assignedIds = allocatedRooms.get(roomType);
-
-        // Generate a unique room ID (e.g., "Single Room-101")
-        int roomNumber = 101 + assignedIds.size();
-        String uniqueRoomId = roomType.split(" ")[0] + "-" + roomNumber;
-
-        // Uniqueness Enforcement: Add to Set and decrement inventory immediately
-        assignedIds.add(uniqueRoomId);
-        availableCounts.put(roomType, availableCounts.get(roomType) - 1);
-
-        return uniqueRoomId;
-    }
-
-    public void displayInventoryState() {
-        System.out.println("\n--- Current Inventory State ---");
-        for (String roomType : availableCounts.keySet()) {
-            System.out.printf("%-15s | Available: %d | Allocated IDs: %s%n",
-                    roomType, availableCounts.get(roomType), allocatedRooms.get(roomType));
-        }
-    }
-}
-
-/**
- * Booking Service processes queued requests and performs room allocation.
- */
-class BookingService {
-    private InventoryService inventory;
-
-    public BookingService(InventoryService inventory) {
+    public BookingProcessor(BookingRequest request, RoomInventory inventory) {
+        this.request = request;
         this.inventory = inventory;
     }
 
-    /**
-     * Processes requests from the queue in FIFO order.
-     */
-    public void processQueue(Queue<Reservation> queue) {
-        System.out.println("\n--- Processing Booking Queue ---");
+    @Override
+    public void run() {
+        System.out.println(Thread.currentThread().getName() + " processing request for "
+                + request.getGuestName() + " (" + request.getRequestedRoomType() + ")");
 
-        if (queue.isEmpty()) {
-            System.out.println("No requests to process.");
-            return;
-        }
+        boolean success = inventory.allocateRoom(request.getRequestedRoomType());
 
-        while (!queue.isEmpty()) {
-            // Dequeue the next request (FIFO)
-            Reservation request = queue.poll();
-            String roomType = request.getRequestedRoomType();
-
-            System.out.print("Processing request for " + request.getGuestName() + " (" + roomType + ")... ");
-
-            // Attempt allocation
-            String assignedRoomId = inventory.allocateRoom(roomType);
-
-            if (assignedRoomId != null) {
-                System.out.println("SUCCESS! Assigned Room ID: " + assignedRoomId);
-            } else {
-                System.out.println("FAILED. No available rooms of this type.");
-            }
+        if (success) {
+            System.out.println("--> SUCCESS: " + request.getGuestName() + " successfully booked a "
+                    + request.getRequestedRoomType() + " room.");
+        } else {
+            System.out.println("--> FAILED: " + request.getGuestName() + " could not book a "
+                    + request.getRequestedRoomType() + " room. (Sold Out)");
         }
     }
 }
 
 /**
- * The main entry point for Use Case 6.
- * * @author Your Name
- * @version 6.0
+ * MAIN CLASS - UseCase11ConcurrentBookingSimulation
  */
 public class BookMyStayApp {
 
     public static void main(String[] args) {
-        System.out.println("=========================================");
-        System.out.println(" Book My Stay - Reservation & Allocation ");
-        System.out.println("=========================================\n");
+        System.out.println("--- Book My Stay: Use Case 11 (Concurrent Booking Simulation) ---\n");
 
-        // 1. Initialize Inventory
-        InventoryService inventory = new InventoryService();
-        inventory.registerRoomType("Single Room", 2); // Only 2 single rooms available
-        inventory.registerRoomType("Double Room", 1);
-        inventory.registerRoomType("Suite Room", 1);
+        RoomInventory sharedInventory = new RoomInventory();
+        System.out.println("Initial State:");
+        sharedInventory.displayInventory();
+        System.out.println("\nStarting concurrent booking requests...\n");
 
-        // Display initial inventory
-        inventory.displayInventoryState();
+        // Create a list of concurrent booking requests (More requests than available inventory)
+        List<BookingRequest> requests = Arrays.asList(
+                new BookingRequest("Alice", "Single"),
+                new BookingRequest("Bob", "Single"),
+                new BookingRequest("Charlie", "Single"),
+                new BookingRequest("Diana", "Single"), // This one should fail (Only 3 Singles)
+                new BookingRequest("Eve", "Suite"),
+                new BookingRequest("Frank", "Suite")   // This one should fail (Only 1 Suite)
+        );
 
-        // 2. Initialize Queue and Load Requests (Simulating Use Case 5)
-        Queue<Reservation> bookingQueue = new LinkedList<>();
-        bookingQueue.offer(new Reservation("Alice Smith", "Single Room"));
-        bookingQueue.offer(new Reservation("Bob Johnson", "Single Room"));
-        bookingQueue.offer(new Reservation("Charlie Davis", "Single Room")); // Will fail (only 2 available)
-        bookingQueue.offer(new Reservation("Diana Prince", "Suite Room"));
+        // Using an ExecutorService to manage a thread pool for our concurrent requests
+        ExecutorService executor = Executors.newFixedThreadPool(requests.size());
 
-        // 3. Initialize Booking Service and Process Queue
-        BookingService bookingService = new BookingService(inventory);
-        bookingService.processQueue(bookingQueue);
+        for (BookingRequest request : requests) {
+            BookingProcessor processor = new BookingProcessor(request, sharedInventory);
+            executor.submit(processor);
+        }
 
-        // 4. Display Final Inventory State to prove synchronization
-        inventory.displayInventoryState();
+        // Shut down the executor and wait for all threads to finish
+        executor.shutdown();
+        try {
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            System.err.println("Execution interrupted.");
+        }
 
-        System.out.println("\n=========================================");
-        System.out.println("Application terminated.");
+        System.out.println("\nAll concurrent requests processed.");
+        System.out.println("\nFinal State:");
+        sharedInventory.displayInventory();
     }
 }
