@@ -1,155 +1,177 @@
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.Map;
-import java.util.Queue;
-import java.util.Set;
+import java.util.*;
 
 /**
- * Represents a guest's intent to book a room.
+ * CLASS - Reservation
+ * Represents a confirmed booking, now with a cancellation status and Room ID.
  */
 class Reservation {
+    private String reservationId;
     private String guestName;
-    private String requestedRoomType;
+    private String roomType;
+    private String roomId;
+    private boolean isCancelled;
 
-    public Reservation(String guestName, String requestedRoomType) {
+    public Reservation(String reservationId, String guestName, String roomType, String roomId) {
+        this.reservationId = reservationId;
         this.guestName = guestName;
-        this.requestedRoomType = requestedRoomType;
+        this.roomType = roomType;
+        this.roomId = roomId;
+        this.isCancelled = false; // By default, a new reservation is confirmed (not cancelled)
     }
 
+    public String getReservationId() { return reservationId; }
     public String getGuestName() { return guestName; }
-    public String getRequestedRoomType() { return requestedRoomType; }
-}
+    public String getRoomType() { return roomType; }
+    public String getRoomId() { return roomId; }
+    public boolean isCancelled() { return isCancelled; }
 
-/**
- * Inventory Service manages room availability state and assigned rooms.
- * Demonstrates mapping Room Types to Assigned Rooms using Sets to prevent double-booking.
- */
-class InventoryService {
-    private Map<String, Integer> availableCounts;
-    // Map to track allocated room IDs per room type using a Set for uniqueness
-    private Map<String, Set<String>> allocatedRooms;
-
-    public InventoryService() {
-        this.availableCounts = new HashMap<>();
-        this.allocatedRooms = new HashMap<>();
-    }
-
-    public void registerRoomType(String roomType, int count) {
-        availableCounts.put(roomType, count);
-        allocatedRooms.put(roomType, new HashSet<>());
-    }
-
-    public boolean isAvailable(String roomType) {
-        return availableCounts.getOrDefault(roomType, 0) > 0;
-    }
-
-    /**
-     * Atomic Logical Operation: Generates ID, updates Set, and decrements inventory.
-     */
-    public String allocateRoom(String roomType) {
-        if (!isAvailable(roomType)) {
-            return null; // Allocation failed due to lack of availability
-        }
-
-        Set<String> assignedIds = allocatedRooms.get(roomType);
-
-        // Generate a unique room ID (e.g., "Single Room-101")
-        int roomNumber = 101 + assignedIds.size();
-        String uniqueRoomId = roomType.split(" ")[0] + "-" + roomNumber;
-
-        // Uniqueness Enforcement: Add to Set and decrement inventory immediately
-        assignedIds.add(uniqueRoomId);
-        availableCounts.put(roomType, availableCounts.get(roomType) - 1);
-
-        return uniqueRoomId;
-    }
-
-    public void displayInventoryState() {
-        System.out.println("\n--- Current Inventory State ---");
-        for (String roomType : availableCounts.keySet()) {
-            System.out.printf("%-15s | Available: %d | Allocated IDs: %s%n",
-                    roomType, availableCounts.get(roomType), allocatedRooms.get(roomType));
-        }
+    public void setCancelled(boolean cancelled) {
+        this.isCancelled = cancelled;
     }
 }
 
 /**
- * Booking Service processes queued requests and performs room allocation.
+ * CLASS - RoomInventory
+ * Maintains available room types and their current availability counts.
  */
-class BookingService {
-    private InventoryService inventory;
+class RoomInventory {
+    private Map<String, Integer> inventoryCounts;
 
-    public BookingService(InventoryService inventory) {
+    public RoomInventory() {
+        inventoryCounts = new HashMap<>();
+        // Initialize with default inventory
+        inventoryCounts.put("Single", 10);
+        inventoryCounts.put("Double", 5);
+        inventoryCounts.put("Suite", 2);
+    }
+
+    public void decrementInventory(String roomType) {
+        if (inventoryCounts.containsKey(roomType) && inventoryCounts.get(roomType) > 0) {
+            inventoryCounts.put(roomType, inventoryCounts.get(roomType) - 1);
+        }
+    }
+
+    public void incrementInventory(String roomType) {
+        if (inventoryCounts.containsKey(roomType)) {
+            inventoryCounts.put(roomType, inventoryCounts.get(roomType) + 1);
+        }
+    }
+
+    public void displayInventory() {
+        System.out.println("Current Inventory: " + inventoryCounts);
+    }
+}
+
+/**
+ * CLASS - BookingHistory
+ * Stores all reservations mapped by their Reservation ID for quick O(1) lookups.
+ */
+class BookingHistory {
+    private Map<String, Reservation> reservations;
+
+    public BookingHistory() {
+        reservations = new HashMap<>();
+    }
+
+    public void addReservation(Reservation reservation) {
+        reservations.put(reservation.getReservationId(), reservation);
+    }
+
+    public Reservation getReservation(String reservationId) {
+        return reservations.get(reservationId);
+    }
+}
+
+/**
+ * CLASS - CancellationService
+ * Validates cancellations and performs controlled rollback operations using a Stack.
+ */
+class CancellationService {
+    private BookingHistory history;
+    private RoomInventory inventory;
+    // Stack used to track recently released room IDs for LIFO rollback logic
+    private Stack<String> releasedRoomIds;
+
+    public CancellationService(BookingHistory history, RoomInventory inventory) {
+        this.history = history;
         this.inventory = inventory;
+        this.releasedRoomIds = new Stack<>();
     }
 
-    /**
-     * Processes requests from the queue in FIFO order.
-     */
-    public void processQueue(Queue<Reservation> queue) {
-        System.out.println("\n--- Processing Booking Queue ---");
+    public void cancelBooking(String reservationId) {
+        System.out.println("\n[Action] Initiating cancellation for Reservation: " + reservationId);
+        Reservation res = history.getReservation(reservationId);
 
-        if (queue.isEmpty()) {
-            System.out.println("No requests to process.");
+        // 1. Validate reservation exists
+        if (res == null) {
+            System.out.println("--> Error: Reservation " + reservationId + " does not exist.");
             return;
         }
 
-        while (!queue.isEmpty()) {
-            // Dequeue the next request (FIFO)
-            Reservation request = queue.poll();
-            String roomType = request.getRequestedRoomType();
-
-            System.out.print("Processing request for " + request.getGuestName() + " (" + roomType + ")... ");
-
-            // Attempt allocation
-            String assignedRoomId = inventory.allocateRoom(roomType);
-
-            if (assignedRoomId != null) {
-                System.out.println("SUCCESS! Assigned Room ID: " + assignedRoomId);
-            } else {
-                System.out.println("FAILED. No available rooms of this type.");
-            }
+        // 2. Validate it is not already cancelled
+        if (res.isCancelled()) {
+            System.out.println("--> Error: Reservation " + reservationId + " is already cancelled.");
+            return;
         }
+
+        // 3. Perform controlled rollback
+        res.setCancelled(true);
+        releasedRoomIds.push(res.getRoomId()); // Push to LIFO Stack
+        inventory.incrementInventory(res.getRoomType()); // Restore Inventory
+
+        System.out.println("--> Success: Booking cancelled. Room " + res.getRoomId() + " (" + res.getRoomType() + ") has been released to availability pool.");
+    }
+
+    public void displayRollbackHistory() {
+        System.out.println("\nRecently released rooms (Rollback Stack LIFO): " + releasedRoomIds);
     }
 }
 
 /**
- * The main entry point for Use Case 6.
- * * @author Your Name
- * @version 6.0
+ * MAIN CLASS - UseCase10BookingCancellation
  */
 public class BookMyStayApp {
 
     public static void main(String[] args) {
-        System.out.println("=========================================");
-        System.out.println(" Book My Stay - Reservation & Allocation ");
-        System.out.println("=========================================\n");
+        System.out.println("--- Book My Stay: Use Case 10 (Cancellation & Rollback) ---\n");
 
-        // 1. Initialize Inventory
-        InventoryService inventory = new InventoryService();
-        inventory.registerRoomType("Single Room", 2); // Only 2 single rooms available
-        inventory.registerRoomType("Double Room", 1);
-        inventory.registerRoomType("Suite Room", 1);
+        // 1. Initialize core system components
+        RoomInventory inventory = new RoomInventory();
+        BookingHistory history = new BookingHistory();
+        CancellationService cancellationService = new CancellationService(history, inventory);
 
-        // Display initial inventory
-        inventory.displayInventoryState();
+        // 2. Setup initial state (Simulate previously confirmed bookings)
+        System.out.println("Setting up initial confirmed reservations...");
 
-        // 2. Initialize Queue and Load Requests (Simulating Use Case 5)
-        Queue<Reservation> bookingQueue = new LinkedList<>();
-        bookingQueue.offer(new Reservation("Alice Smith", "Single Room"));
-        bookingQueue.offer(new Reservation("Bob Johnson", "Single Room"));
-        bookingQueue.offer(new Reservation("Charlie Davis", "Single Room")); // Will fail (only 2 available)
-        bookingQueue.offer(new Reservation("Diana Prince", "Suite Room"));
+        inventory.decrementInventory("Single");
+        Reservation r1 = new Reservation("RES101", "Alice", "Single", "S-01");
+        history.addReservation(r1);
 
-        // 3. Initialize Booking Service and Process Queue
-        BookingService bookingService = new BookingService(inventory);
-        bookingService.processQueue(bookingQueue);
+        inventory.decrementInventory("Double");
+        Reservation r2 = new Reservation("RES102", "Bob", "Double", "D-05");
+        history.addReservation(r2);
 
-        // 4. Display Final Inventory State to prove synchronization
-        inventory.displayInventoryState();
+        inventory.decrementInventory("Suite");
+        Reservation r3 = new Reservation("RES103", "Charlie", "Suite", "ST-02");
+        history.addReservation(r3);
 
-        System.out.println("\n=========================================");
-        System.out.println("Application terminated.");
+        inventory.displayInventory();
+
+        // 3. Test valid cancellations
+        cancellationService.cancelBooking("RES101"); // Alice cancels
+        inventory.displayInventory(); // Should show Single incremented
+
+        cancellationService.cancelBooking("RES103"); // Charlie cancels
+        inventory.displayInventory(); // Should show Suite incremented
+
+        // 4. Test validation limits (Error handling)
+        // Attempt to cancel an already cancelled booking
+        cancellationService.cancelBooking("RES101");
+
+        // Attempt to cancel a non-existent booking
+        cancellationService.cancelBooking("RES999");
+
+        // 5. Verify the LIFO Stack
+        cancellationService.displayRollbackHistory();
     }
 }
