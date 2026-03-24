@@ -1,3 +1,4 @@
+import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -13,9 +14,11 @@ class InvalidBookingException extends Exception {
 
 /**
  * CLASS - Reservation
- * Represents a confirmed booking, now with a cancellation status and Room ID.
+ * Represents a confirmed booking, now implementing Serializable.
  */
-class Reservation {
+class Reservation implements Serializable {
+    private static final long serialVersionUID = 1L;
+
     private String reservationId;
     private String guestName;
     private String roomType;
@@ -39,6 +42,12 @@ class Reservation {
     public void setCancelled(boolean cancelled) {
         this.isCancelled = cancelled;
     }
+
+    @Override
+    public String toString() {
+        return "Reservation[ID=" + reservationId + ", Guest=" + guestName + 
+               ", Room=" + roomType + ", RoomID=" + roomId + ", Cancelled=" + isCancelled + "]";
+    }
 }
 
 /**
@@ -46,7 +55,9 @@ class Reservation {
  * Maintains available room types and their current availability counts.
  * Uses synchronized methods to ensure Thread Safety across the entire app.
  */
-class RoomInventory {
+class RoomInventory implements Serializable {
+    private static final long serialVersionUID = 1L;
+    
     private final Map<String, Integer> inventoryCounts;
 
     public RoomInventory() {
@@ -79,13 +90,11 @@ class RoomInventory {
         int currentCount = inventoryCounts.getOrDefault(roomType, 0);
 
         if (currentCount > 0) {
-            // Simulate processing delay to expose race conditions if synchronization were missing
             try {
                 Thread.sleep(50);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-
             inventoryCounts.put(roomType, currentCount - 1);
             return true;
         }
@@ -122,8 +131,11 @@ class BookingRequestQueue {
 
 /**
  * CLASS - BookingHistory
+ * Implements Serializable to persist the list of confirmed reservations.
  */
-class BookingHistory {
+class BookingHistory implements Serializable {
+    private static final long serialVersionUID = 1L;
+    
     private Map<String, Reservation> reservations;
 
     public BookingHistory() {
@@ -140,6 +152,75 @@ class BookingHistory {
 
     public List<Reservation> getConfirmedReservations() {
         return new ArrayList<>(reservations.values());
+    }
+
+    public void displayHistory() {
+        System.out.println("Booking History:");
+        if (reservations.isEmpty()) {
+            System.out.println(" (No bookings found)");
+        } else {
+            for (Reservation res : reservations.values()) {
+                System.out.println(" - " + res.toString());
+            }
+        }
+    }
+}
+
+/**
+ * CLASS - SystemState
+ * A wrapper class that holds all critical data needing persistence.
+ */
+class SystemState implements Serializable {
+    private static final long serialVersionUID = 1L;
+
+    private RoomInventory inventory;
+    private BookingHistory history;
+
+    public SystemState(RoomInventory inventory, BookingHistory history) {
+        this.inventory = inventory;
+        this.history = history;
+    }
+
+    public RoomInventory getInventory() { return inventory; }
+    public BookingHistory getHistory() { return history; }
+}
+
+/**
+ * CLASS - PersistenceService
+ * Handles writing the SystemState to a file and reading it back.
+ */
+class PersistenceService {
+    private static final String DATA_FILE = "hotel_data.ser";
+
+    // Saves the system state to a file
+    public void saveState(SystemState state) {
+        System.out.println("\n[System] Initiating shutdown sequence. Saving state...");
+        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(DATA_FILE))) {
+            oos.writeObject(state);
+            System.out.println("[System] State successfully saved to " + DATA_FILE);
+        } catch (IOException e) {
+            System.err.println("[Error] Failed to save system state: " + e.getMessage());
+        }
+    }
+
+    // Loads the system state from a file
+    public SystemState loadState() {
+        System.out.println("\n[System] Booting up. Attempting to restore previous state...");
+        File file = new File(DATA_FILE);
+
+        if (!file.exists()) {
+            System.out.println("[System] No previous state found. Initializing fresh system.");
+            return null;
+        }
+
+        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(file))) {
+            SystemState state = (SystemState) ois.readObject();
+            System.out.println("[System] State successfully restored from " + DATA_FILE);
+            return state;
+        } catch (IOException | ClassNotFoundException e) {
+            System.err.println("[Error] Data file corrupted or missing class. Initializing fresh system.");
+            return null; 
+        }
     }
 }
 
@@ -188,7 +269,7 @@ class CancellationService {
  */
 class BookingReportService {
     public void generateReport(BookingHistory history) {
-        System.out.println("Booking History Report");
+        System.out.println("Booking History Report:");
         for (Reservation res : history.getConfirmedReservations()) {
             String status = res.isCancelled() ? "[CANCELLED] " : "[CONFIRMED] ";
             System.out.println(status + "ID: " + res.getReservationId() + 
@@ -284,11 +365,38 @@ class BookingProcessor implements Runnable {
 public class BookMyStayApp {
 
     public static void main(String[] args) {
+        System.out.println("--- Book My Stay: Complete Integrated System ---\n");
+
+        PersistenceService persistenceService = new PersistenceService();
+        RoomInventory inventory;
+        BookingHistory history;
+
+        // --- PHASE 1: Try to load existing state ---
+        SystemState recoveredState = persistenceService.loadState();
+
+        if (recoveredState != null) {
+            System.out.println("\n[Note] You are looking at recovered data! The application successfully " +
+                    "remembered the state from the previous run.");
+            inventory = recoveredState.getInventory();
+            history = recoveredState.getHistory();
+            
+            System.out.println("\n--- Current System State ---");
+            inventory.displayInventory();
+            
+            BookingReportService reportService = new BookingReportService();
+            System.out.println();
+            reportService.generateReport(history);
+            
+            return; // Terminate execution here to demonstrate successful recovery.
+        } 
+
+        // First run or file missing: Initialize fresh system and run the full simulation
+        inventory = new RoomInventory();
+        history = new BookingHistory();
         Scanner scanner = new Scanner(System.in);
-        RoomInventory inventory = new RoomInventory();
 
         // --- PART 1: Booking Validation ---
-        System.out.println("--- PART 1: Booking Validation ---");
+        System.out.println("\n--- PART 1: Booking Validation ---");
         ReservationValidator validator = new ReservationValidator();
         BookingRequestQueue bookingQueue = new BookingRequestQueue();
 
@@ -303,12 +411,11 @@ public class BookMyStayApp {
         } catch (InvalidBookingException e) {
             System.out.println("Booking failed: " + e.getMessage());
         } finally {
-            scanner.close(); // Closed here; no further console input expected below
+            scanner.close(); // Closed here; no further console input expected
         }
 
         // --- PART 2: Booking History Setup ---
         System.out.println("\n--- PART 2: Booking History Setup ---");
-        BookingHistory history = new BookingHistory();
         
         inventory.decrementInventory("Single");
         history.addReservation(new Reservation("RES101", "Alice", "Single", "S-01"));
@@ -353,7 +460,7 @@ public class BookMyStayApp {
         inventory.displayInventory();
         System.out.println("\nStarting concurrent booking requests...");
 
-        // Generate 12 requests for Singles (Inventory likely has 10 right now)
+        // Generate 12 requests for Singles (Inventory likely has around 10 depending on prior cancellations)
         List<BookingRequest> requests = new ArrayList<>();
         for (int i = 1; i <= 12; i++) {
             requests.add(new BookingRequest("Guest_" + i, "Single"));
@@ -373,5 +480,11 @@ public class BookMyStayApp {
 
         System.out.println("\nFinal State after concurrent simulation:");
         inventory.displayInventory();
+
+        // --- PART 6: Save state (Simulate shutdown) ---
+        SystemState currentState = new SystemState(inventory, history);
+        persistenceService.saveState(currentState);
+
+        System.out.println("\n[Note] Run the program again to see the state instantly recover instead of resetting!");
     }
 }
